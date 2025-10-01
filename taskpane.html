@@ -63,16 +63,16 @@
       inc(onProgress, 5, "Preparing");
       let lastErr = null;
 
-      // 1) عبر Vite proxy (https://localhost:3000/nano/…)
-      try {
-        const data = await tryCall("/nano/generate", body, signal);
-        const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "mock";
-        inc(onProgress, 100, "Done (proxy)");
-        return { base64: data.base64 };
-      } catch (e) {
-        lastErr = e;
-        console.warn("[NIS] proxy call failed:", e?.message || e);
-      }
+      // 1) Cloudflare Worker (production)
+    try {
+      const data = await tryCall("https://nis-proxy.wolfy-wooolfy.workers.dev/nano/generate", body, signal);
+      const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "worker";
+      inc(onProgress, 100, "Done (worker)");
+      return { base64: data.base64 };
+    } catch (e) {
+      lastErr = e;
+      console.warn("[NIS] worker call failed:", e?.message || e);
+    }
 
       // 2) محاولة مباشرة على 8787 (قد تمنعها Mixed-Content في بعض الإعدادات، لكن نحاول)
       try {
@@ -344,7 +344,7 @@
         height: size.h
       };
 
-      const res = await fetch('/nano/generate', {
+      const res = await fetch('https://nis-proxy.wolfy-wooolfy.workers.dev/nano/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
