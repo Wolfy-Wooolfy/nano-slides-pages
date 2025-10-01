@@ -1,0 +1,370 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Nano Interactive Slides</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:16px}
+    .row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    .row label{width:130px}
+    .row input[type="range"]{flex:1}
+    .grid{display:grid;gap:12px}
+    .btns{display:flex;gap:8px;flex-wrap:wrap}
+    .value{min-width:48px;text-align:right}
+    .card{border:1px solid #ddd;border-radius:10px;padding:12px}
+    canvas{width:100%;height:auto;border:1px dashed #ccc;border-radius:8px}
+    .muted{font-size:12px;color:#777}
+    .tog{display:flex;align-items:center;gap:8px}
+    .half{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .title{margin:0 0 8px 0}
+    .inputs{display:grid;gap:8px}
+    .inline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    progress{width:160px;height:12px}
+    #nmBusy{font-size:12px;color:#555}
+  </style>
+
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
+  <!-- CANONICAL: src/addins/powerpoint/taskpane.html -->
+  <!-- Nano image provider (inline) — يعمل مع أي سيرفر (Webpack/Vite) -->
+  <!-- NIS inline image provider (robust) -->
+<script>
+  (function () {
+    console.log("NIS inline provider: v2");
+    function inc(onProgress, p, m) { try { onProgress && onProgress(p, m || ""); } catch (_) {} }
+    function pickSize(a) { return a==="4:3"?{w:1024,h:768}:a==="1:1"?{w:1024,h:1024}:{w:1920,h:1080}; }
+
+    async function tryCall(url, body, signal) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal
+      });
+      if (!res.ok) throw new Error(`provider-${res.status}`);
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const data = ct.includes("application/json") ? await res.json() : JSON.parse(await res.text());
+      const prov = res.headers.get("x-nis-provider") || "";
+      if (data && typeof data.base64 === "string" && data.base64.length > 100) return { base64: data.base64, provider: prov };
+      throw new Error("provider-no-base64");
+    }
+
+    window.NIS_generateImage = async (style, onProgress, signal) => {
+      const s = pickSize((style && style.aspect) || "16:9");
+      const body = {
+        prompt: (String(style?.theme || "") + " " + String(style?.prompt || "")).trim(),
+        seed: Number(style?.seed || 0) || 0,
+        width: s.w,
+        height: s.h
+      };
+
+      inc(onProgress, 5, "Preparing");
+      let lastErr = null;
+
+      // 1) عبر Vite proxy (https://localhost:3000/nano/…)
+      try {
+        const data = await tryCall("/nano/generate", body, signal);
+        const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "mock";
+        inc(onProgress, 100, "Done (proxy)");
+        return { base64: data.base64 };
+      } catch (e) {
+        lastErr = e;
+        console.warn("[NIS] proxy call failed:", e?.message || e);
+      }
+
+      // 2) محاولة مباشرة على 8787 (قد تمنعها Mixed-Content في بعض الإعدادات، لكن نحاول)
+      try {
+        const data = await tryCall("http://localhost:8787/nano/generate", body, signal);
+        const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "mock";
+        inc(onProgress, 100, "Done (direct)");
+        return { base64: data.base64 };
+      } catch (e) {
+        lastErr = e;
+        console.warn("[NIS] direct call failed:", e?.message || e);
+      }
+
+      throw lastErr || new Error("provider-failed");
+    };
+  })();
+</script>
+
+<script defer src="./taskpane.js"></script>
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <h2>Nano Interactive Slides</h2>
+
+  <div class="card" id="linkSeqCard">
+    <h3 style="margin-top:0">Linked Sequence (MVP)</h3>
+
+    <div class="row">
+      <label for="linkEnable" style="width:auto">
+        <input id="linkEnable" type="checkbox" />
+        Enable linked sequence on this slide
+      </label>
+    </div>
+
+    <div class="row">
+      <label for="linkNext">Next slide</label>
+      <select id="linkNext">
+        <option value="">— None —</option>
+      </select>
+    </div>
+
+    <div class="btns">
+      <button id="linkPlay"    class="btn" title="Arm auto-start/auto-advance per settings">Play</button>
+      <button id="linkAdvance" class="btn" title="Advance to the configured next slide now">Advance</button>
+      <span class="muted" id="linkHint"></span>
+    </div>
+  </div>
+
+  <div class="row">
+    <label for="linkAuto" style="width:auto">
+      <input id="linkAuto" type="checkbox" />
+      Auto-advance while running
+    </label>
+  </div>
+
+  <div class="row">
+    <label for="linkAutoMs">Auto-advance after (ms)</label>
+    <input id="linkAutoMs" type="number" min="200" step="100" value="3000" />
+  </div>
+
+  <div class="row">
+    <label for="linkInherit" style="width:auto">
+      <input id="linkInherit" type="checkbox" />
+      Copy Simulation settings to next slide on first visit
+    </label>
+  </div>
+
+  <div class="row">
+    <label for="linkInheritNm" style="width:auto">
+      <input id="linkInheritNm" type="checkbox" />
+      Also copy Nano style (first visit only)
+    </label>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3 class="title">Nano Mode</h3>
+      <div id="nmProv" class="chip"></div>
+      <div class="inputs">
+        <div class="row">
+          <label for="nmTheme">Style Theme</label>
+          <input id="nmTheme" type="text" placeholder="e.g. Clean tech isometric" />
+        </div>
+        <div class="row">
+          <label for="nmSeed">Seed</label>
+          <input id="nmSeed" type="number" min="0" step="1" value="42" />
+        </div>
+        <div class="row">
+          <label for="nmPrompt">Prompt Add-on</label>
+          <input id="nmPrompt" type="text" placeholder="scene content words" />
+        </div>
+        <div class="row">
+          <label for="nmAspect">Aspect</label>
+          <select id="nmAspect">
+            <option value="16:9" selected>16:9 (1920×1080)</option>
+            <option value="4:3">4:3 (1024×768)</option>
+            <option value="1:1">1:1 (1024×1024)</option>
+          </select>
+        </div>
+
+        <!-- Busy + Progress + Cancel -->
+        <div class="inline">
+          <div id="nmBusy" style="display:none">Generating…</div>
+          <progress id="nmProg" value="0" max="100" style="display:none"></progress>
+          <button id="nmCancel"        class="btn" title="Cancel current generation" style="display:none;">Cancel</button>
+        </div>
+
+        <div class="tog"><input id="nmCaption" type="checkbox" /><label for="nmCaption">Caption (debug only)</label></div>
+      </div>
+
+      <div class="btns" style="margin-top:8px">
+	<button id="nmApplyCached"   class="btn" title="Apply previously generated image for this style" style="display:none;">Apply cached</button>
+	<span id="nmHint" class="muted"></span>
+        <button id="nmSave"          class="btn" title="Save style for this slide">Save style</button>
+        <button id="nmStyleSelected" class="btn" title="Generate & apply for current style">Apply</button>
+        <button id="nmRegenSelected" class="btn" title="Re-generate (auto-increment seed if enabled)">Re-generate</button>
+        <button id="nmApplyBackground" class="btn" title="Apply image to slide background (fit & send to back)">Apply as Background</button>
+        <button id="nmPasteBackground" class="btn" title="Paste image from clipboard as background">Paste → Background</button>
+        <button id="nmExportStyles" class="btn" title="Export all slide styles to JSON">Export Styles</button>
+        <input id="nmImportStylesFile" type="file" accept="application/json" style="display:none;" />
+        <button id="nmImportStyles" class="btn" title="Import styles JSON to project">Import Styles</button>
+
+        <!-- Nano Style Preview Chip -->
+<div id="nmStyleChip" class="chip" style="
+  display:flex;align-items:center;gap:.5rem;margin:.5rem 0;
+  padding:.4rem .6rem;border:1px solid #e5e7eb;border-radius:.5rem;
+  background:#fafafa;font:13px/1.3 system-ui,Segoe UI,Arial; color:#374151;">
+  <span id="nmChipAspect"  style="font-weight:600;"></span>
+  <span id="nmChipSeed"    style="opacity:.8;"></span>
+  <span id="nmChipTheme"   style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+  <span id="nmChipPrompt"  style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+</div>
+        <label style="display:inline-flex;align-items:center;gap:.4rem;margin-left:.5rem;">
+  <input type="checkbox" id="nmBgLock" />
+  <span class="muted">Send to back</span>
+</label>
+
+<button id="nmApplyBackgroundBatch" class="btn" 
+        title="Apply image as background to all selected slides">
+  Apply to Selected Slides
+</button>
+
+<button id="nmCopyStyleSel" class="btn" 
+        title="Copy current Nano style to selected slides (no image generation)">
+  Copy style → Selected
+</button>
+
+<button id="nmCopyStyleAll" class="btn" 
+        title="Copy current Nano style to all slides (no image generation)">
+  Copy style → All
+</button>
+      </div>
+      <div class="muted" id="nmHint">Tip: لو عايز مقاس معيّن، اختَر Placeholder/صورة بالمقاس ده وبعدين اضغط Style Selected.</div>
+      <div class="tog"><input id="nmAutoInc" type="checkbox" checked />
+      <label for="nmAutoInc">Auto-increment seed on Re-generate</label></div>
+    </div>
+    
+    <div class="card">
+      <h3 class="title">Simulation Controls</h3>
+      <div class="row">
+        <label for="speed">Speed</label>
+        <input id="speed" type="range" min="1" max="100" step="1" value="50" />
+        <div class="value" id="speedVal">50</div>
+      </div>
+      <div class="row">
+        <label for="capacity">Capacity</label>
+        <input id="capacity" type="range" min="1" max="500" step="1" value="100" />
+        <div class="value" id="capacityVal">100</div>
+      </div>
+      <div class="row">
+        <label for="delay">Delay</label>
+        <input id="delay" type="range" min="0" max="10" step="0.1" value="1" />
+        <div class="value" id="delayVal">1.0</div>
+      </div>
+
+        <!-- Styles Dashboard -->
+
+        <!-- Overlay Label -->
+      <div class="card" id="overlayCard" style="margin-top:12px">
+        <h3 class="title">Overlay label</h3>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;gap:6px;align-items:center">
+            <span class="muted">Corner</span>
+            <select id="ovCorner">
+              <option value="tr">Top-Right</option>
+              <option value="tl">Top-Left</option>
+              <option value="br">Bottom-Right</option>
+              <option value="bl">Bottom-Left</option>
+            </select>
+          </label>
+
+          <label style="display:flex;gap:6px;align-items:center">
+            <span class="muted">Opacity</span>
+            <input id="ovOpacity" type="range" min="20" max="100" step="5" value="80" />
+            <span id="ovOpacityVal" class="muted">80%</span>
+          </label>
+
+          <button id="ovApply">Apply overlay</button>
+          <button id="ovRemove">Remove overlay</button>
+          <div id="ovHint" class="muted" style="margin-left:auto"></div>
+        </div>
+      </div>
+
+      <div class="card" id="stylesDash" style="margin-top:12px">
+        <h3 class="title">Styles Dashboard</h3>
+        <div class="muted" style="margin-bottom:8px">Manage all slide styles from one place.</div>
+
+        <!-- Toolbar -->
+        <div id="stylesToolbar" style="display:flex;gap:10px;align-items:center;margin:6px 0 10px">
+          <label style="display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="sdUseCacheFirst" checked>
+            <span class="muted">Use cached image if available</span>
+          </label>
+          <button id="sdRegenApplySelected">Regenerate + Apply (Selected)</button>
+          <button id="imgMetaExport">Export Image Metadata</button>
+          <button id="imgMetaImport">Import Image Metadata</button>
+          <input id="imgMetaImportFile" type="file" accept="application/json" style="display:none" />
+          <div id="sdHint" class="muted" style="margin-left:auto"></div>
+        </div>
+
+        <div id="stylesList" class="grid" style="gap:8px"></div>
+      </div>
+
+
+      <div class="half">
+        <div class="tog"><input id="projectToggle" type="checkbox" checked /><label for="projectToggle">Project to slide</label></div>
+        <div class="row"><label for="projectMs">Project ms</label><input id="projectMs" type="number" min="250" step="50" value="1000" /></div>
+      </div>
+
+      <div class="half">
+        <div class="tog"><input id="autoStartToggle" type="checkbox" checked /><label for="autoStartToggle">Auto-Start on slide</label></div>
+        <div class="tog"><input id="stopOnChangeToggle" type="checkbox" checked /><label for="stopOnChangeToggle">Stop on slide change</label></div>
+      </div>
+
+      <div class="btns">
+        <button id="start"      class="btn" title="Start simulation (this slide only)">Start</button>
+        <button id="stop"       class="btn" title="Stop simulation">Stop</button>
+        <button id="reset"      class="btn" title="Reset parameters to defaults">Reset</button>
+        <button id="snapshot"   class="btn" title="Insert current preview as image">Snapshot</button>
+        <button id="exportJson" class="btn" title="Export scene settings (JSON)">Export</button>
+        <button id="importJson" class="btn" title="Import scene settings (JSON)">Import</button>
+        <input id="jsonFile" type="file" accept="application/json" style="display:none" />
+        <button id="downloadPng" class="btn" title="Download preview as PNG">PNG</button>
+      </div>
+      <div class="muted" id="hostHint"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><label>Live Preview</label><div class="muted">auto-render</div></div>
+      <canvas id="preview" width="560" height="280"></canvas>
+    </div>
+  </div>
+  <script>
+  (function () {
+    const API = (path) => `https://localhost:3000${path}`; // نفس origin بتاع Vite
+    async function nisGenerateImageViaProxy(style, onProgress, abortSignal) {
+      const aspect = (style && style.aspect) || '16:9';
+      // نفس المقياس اللي هنعدّله في nmSize()
+      const size = (function(as){
+        if (as === '1:1') return { w: 1024, h: 1024 };
+        if (as === '4:3') return { w: 1024, h: 768  };
+        return { w: 1280, h: 720 }; // 16:9
+      })(aspect);
+
+      const prompt = [style?.theme || '', style?.prompt || ''].filter(Boolean).join(' | ').trim();
+      const body = {
+        prompt,
+        seed: Number(style?.seed || 0),
+        width: size.w,
+        height: size.h
+      };
+
+      const res = await fetch('/nano/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortSignal
+      });
+
+      // نقرأ الهيدر المعروض من السيرفر
+      const via = res.headers.get('x-nis-provider') || 'mock';
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `generate-failed:${res.status}`);
+      }
+      const j = await res.json();
+      // نعيد data:image/… لو الـ taskpane.js متوقع كده
+      return { base64: j.base64, via };
+    }
+
+    // نجعلها متاحة لـ taskpane.js
+    if (!window.NIS_generateImage) window.NIS_generateImage = nisGenerateImageViaProxy;
+  })();
+</script>
+</body>
+</html>
