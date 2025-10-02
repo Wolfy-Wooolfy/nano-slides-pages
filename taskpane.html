@@ -74,7 +74,6 @@
       console.warn("[NIS] worker call failed:", e?.message || e);
     }
 
-      // 2) محاولة مباشرة على 8787 (قد تمنعها Mixed-Content في بعض الإعدادات، لكن نحاول)
       try {
         const data = await tryCall("http://localhost:8787/nano/generate", body, signal);
         const pv = document.getElementById("nmProv"); if (pv) pv.textContent = data.provider || "mock";
@@ -329,7 +328,6 @@
     const API = (path) => `https://localhost:3000${path}`; // نفس origin بتاع Vite
     async function nisGenerateImageViaProxy(style, onProgress, abortSignal) {
       const aspect = (style && style.aspect) || '16:9';
-      // نفس المقياس اللي هنعدّله في nmSize()
       const size = (function(as){
         if (as === '1:1') return { w: 1024, h: 1024 };
         if (as === '4:3') return { w: 1024, h: 768  };
@@ -351,20 +349,18 @@
         signal: abortSignal
       });
 
-      // نقرأ الهيدر المعروض من السيرفر
       const via = res.headers.get('x-nis-provider') || 'mock';
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error || `generate-failed:${res.status}`);
       }
       const j = await res.json();
-      // نعيد data:image/… لو الـ taskpane.js متوقع كده
       return { base64: j.base64, via };
     }
 
-    // نجعلها متاحة لـ taskpane.js
     if (!window.NIS_generateImage) window.NIS_generateImage = nisGenerateImageViaProxy;
   })();
 </script>
 </body>
 </html>
+
